@@ -3,7 +3,7 @@
 Usage: python obsidian2cosma.py -i input_folder_path -o output_folder_path
                                 [--type TYPE] [--tags TAGS]
                                 [--typedlinks TYPEDLINKS] [--semanticsection SEMANTICSECTION]
-                                [--creationdate CREATIONDATE] 
+                                [--creationdate CREATIONDATE]
                                 [--verbose]
 
 Optional arguments:
@@ -15,7 +15,7 @@ Optional arguments:
   --creationdate CREATIONDATE           Fill ID with file creation date if CREATIONDATE=True (e.g --creationdate True)
   --v, --verbose                        Print changes in the terminal
 
-Author: Kévin Polisano 
+Author: Kévin Polisano
 Contact: kevin.polisano@cnrs.fr
 
 License: GNU General Public License v3.0
@@ -45,6 +45,17 @@ parser.add_argument("--semanticsection", help="Specify in which section typed li
 parser.add_argument("--creationdate", help="Fill ID with file creation date if CREATIONDATE=True (e.g --creationdate True)", default=False)
 parser.add_argument("--zettlr", help="Use Zettlr syntax for wiki-links if ZETTLR=True", default=False)
 parser.add_argument("-v", "--verbose", action='store_true', help='Print changes in the terminal')
+
+global hasTouch
+hasTouch = False
+try:
+  # TODO: hide output
+  str_touch_cmd = "touch --help"
+  touchHelpResult = os.popen(str_touch_cmd, 'r').read()
+  if isinstance(touchHelpResult, str) and "Usage: touch" in touchHelpResult:
+    hasTouch = True
+except Exception as error:
+  hasTouch = False
 
 # Parse the command line arguments
 args = parser.parse_args()
@@ -83,26 +94,27 @@ def copy_system_birthtime(source, destination):
   """Assign the creation date of source file to destination file"""
   # Get the creation date of source file
   timestamp = creation_date(source)
-  # Convert in the format YYYYMMDDHHmm.ss (see man touch)
-  birthtime = dt.fromtimestamp(timestamp).strftime('%Y%m%d%H%M.%S')
   # Assign source file's creation date to destination's one (but also overwrite access and modification dates)
   # Can use instead on Mac OSX: SetFile -d "$(GetFileInfo -d source)" destination to avoid this issue
-  str_cmd = "touch -t " + birthtime + " " + "\"" + destination + "\"" 
-  os.system(str_cmd)
+  if hasTouch:
+    # Convert in the format YYYYMMDDHHmm.ss (see man touch)
+    birthtime = dt.fromtimestamp(timestamp).strftime('%Y%m%d%H%M.%S')
+    str_cmd = "touch -t " + birthtime + " " + "\"" + destination + "\""
+    os.system(str_cmd)
+  else:
+    # Convert in the format YYYYMMDDHHmm.ss (see man touch)
+    birthtime = dt.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+    str_cmd = "type nul > " + "\"" + destination + "\""
+    os.system(str_cmd)
+    str_cmd = "powershell -command \"(Get-Item \\\"" + destination + "\\\").LastWriteTime=(\\\"" + birthtime + "\\\")\""
+    print(str_cmd)
+    os.system(str_cmd)
 
 def create_id(file) -> str:
   """Function to create an 14 digit id by timestamp (year, month, day, hours, minutes and seconds) corresponding to the file creation date"""
   global currentId
-  # If the files creation date are available
-  if args.creationdate:
-    # Retrieve the file creation date
-    timestamp = creation_date(file)
-    # Convert the date to a string in the format YYYYMMDDHHMMSS
-    return dt.fromtimestamp(timestamp).strftime('%Y%m%d%H%M%S')
-  # Otherwise create ad-hoc IDs by incrementing the current ID (initialized with current date)
-  else:
-    currentId = currentId + 1
-    return currentId
+  currentId = currentId + 1
+  return currentId
 
 def parse_yaml_front_matter(content):
   """Parses YAML front matter from a Markdown file."""
@@ -144,7 +156,7 @@ def filter_files(root, files, type=None, tags=None):
     # Select Markdown files
     if file.endswith(".md"):
       file_path = os.path.join(root, file)
-      with open(file_path, "r") as f:
+      with open(file_path, "r", encoding="utf-8") as f:
         content = f.read()
         # Extract the YAML front matter
         front_matter, _ = parse_yaml_front_matter(content)
@@ -200,7 +212,7 @@ def copy_and_filter_files(input_folder, output_folder):
       # Copy current file from the input folder to output folder
       shutil.copy2(os.path.join(root, file), output_folder) # copy2() preserve access and modifications dates
       copy_system_birthtime(os.path.join(root, file), os.path.join(output_folder, file)) # but birthtime (= creation date) has to be set up manually
-  
+
 def metadata_init(files) -> dict:
   """Function to initialize metadata and save them in a csv file
   Find (or create) the title and id fields in the YAML frontmatter of all Markdown files
@@ -356,8 +368,11 @@ def rename_file(file):
   new_name = unicodedata.normalize("NFD", file).encode("ascii", "ignore").decode("utf-8")
   # Replace spaces with hyphens
   new_name = new_name.replace(" ", "-")
-  # Write the new filename
-  os.rename(file, new_name)
+  if new_name != file:
+    if os.path.exists(new_name):
+      os.unlink(new_name)
+    # Write the new filename
+    os.rename(file, new_name)
 
 def main():
   # If the output folder does not exist, then create one
@@ -384,7 +399,8 @@ def main():
 
   # Rename files by removing accents and replacing spaces with hyphens
   for file in files:
-    rename_file(file)
+    if os.path.exists(file):
+      rename_file(file)
 
 if __name__ == "__main__":
   main()
